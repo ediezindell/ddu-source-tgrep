@@ -97,6 +97,16 @@ kind は `file`(ddu-kind-file の契約に従う)。
 | `minInputLength` | `2` | これ未満の入力では検索しない |
 | `highlights` | path / lineNr / word 各 hl_group | ddu-source-rg と同形式 |
 | `serveArgs` | `[]` | `tgrep serve` への追加引数(`--no-watch` 等) |
+| `debug` | `false` | デバッグ出力(下記) |
+
+### debug mode
+
+`debug: true` のとき、以下を `:messages`(echomsg)に出力する:
+
+- サーバー解決の経緯: 既存サーバーへの接続か新規 spawn か、serve.json のパス、ポート、root、
+  spawn した場合はコマンドライン全体
+- 各 search のリクエスト概要(pattern / 付与した glob / caseMode の解決結果)と、
+  結果件数・所要時間・stale として破棄したかどうか
 
 ## エラー処理
 
