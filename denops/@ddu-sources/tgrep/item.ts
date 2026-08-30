@@ -64,7 +64,7 @@ export function parseSearchResult(value: unknown): SearchResult {
 export function matchRowToItem(args: {
   row: unknown;
   root: string;
-  highlights: HighlightGroup;
+  highlights: Partial<HighlightGroup>;
 }): Item<ActionData> | undefined {
   if (args.row === null || typeof args.row !== "object") {
     throw new TypeError("tgrep: match row is not a JSON object");
@@ -112,27 +112,31 @@ export function matchRowToItem(args: {
   const text = content.replace(/\r?\n$/, "");
   const header = `${file}:${line}:${col}: `;
 
+  const hlGroupPath = args.highlights.path ?? "";
+  const hlGroupLineNr = args.highlights.lineNr ?? "";
+  const hlGroupWord = args.highlights.word ?? "";
+
   const highlights: ItemHighlight[] = [];
-  if (args.highlights.path !== "") {
+  if (hlGroupPath !== "") {
     highlights.push({
       name: "path",
-      hl_group: args.highlights.path,
+      hl_group: hlGroupPath,
       col: 1,
       width: utf8Length(file),
     });
   }
-  if (args.highlights.lineNr !== "") {
+  if (hlGroupLineNr !== "") {
     highlights.push({
       name: "lineNr",
-      hl_group: args.highlights.lineNr,
+      hl_group: hlGroupLineNr,
       col: utf8Length(file) + 2,
       width: utf8Length(String(line)),
     });
   }
-  if (args.highlights.word !== "" && endByte > startByte) {
+  if (hlGroupWord !== "" && endByte > startByte) {
     highlights.push({
       name: "word",
-      hl_group: args.highlights.word,
+      hl_group: hlGroupWord,
       col: utf8Length(header) + startByte + 1,
       width: endByte - startByte,
     });
@@ -153,7 +157,7 @@ export function matchRowToItem(args: {
 export function matchRowsToItems(args: {
   rows: unknown[];
   root: string;
-  highlights: HighlightGroup;
+  highlights: Partial<HighlightGroup>;
   maxItems: number;
 }): Item<ActionData>[] {
   const items: Item<ActionData>[] = [];

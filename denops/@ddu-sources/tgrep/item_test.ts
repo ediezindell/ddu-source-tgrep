@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path/join";
 import {
+  type HighlightGroup,
   matchRowsToItems,
   matchRowToItem,
   parseSearchResult,
@@ -108,6 +109,28 @@ Deno.test("matchRowToItem は空のハイライトグループを出力しない
   });
 
   assertEquals(item?.highlights, []);
+});
+
+Deno.test("matchRowToItem は highlights を一部キーだけ指定しても hl_group が undefined のエントリを作らない", () => {
+  const partialHighlights = { word: "Search" } as HighlightGroup;
+
+  const item = matchRowToItem({
+    row: {
+      type: "match",
+      file: "a.txt",
+      line: 1,
+      content: "hit\n",
+      spans: [[0, 3]],
+      columns: [1],
+    },
+    root,
+    highlights: partialHighlights,
+  });
+
+  assertEquals(
+    item?.highlights?.some((highlight) => highlight.hl_group === undefined),
+    false,
+  );
 });
 
 Deno.test("matchRowToItem は col に columns、ハイライト位置に spans を使う", () => {
