@@ -7,6 +7,7 @@ import {
   type SpawnArgs,
   type SpawnResult,
   spawnServer,
+  stopServer,
 } from "./server.ts";
 
 async function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
@@ -249,6 +250,49 @@ Deno.test("probeServer はポートに接続できなければ undefined", async
 
     assertEquals(await probeServer(root), undefined);
   });
+});
+
+Deno.test("stopServer は serve.json が無ければ throw する", async () => {
+  await withRoot(async (root) => {
+    await assertRejects(
+      () => stopServer(root),
+      Error,
+      "no server info at",
+    );
+  });
+});
+
+Deno.test({
+  name: "stopServer は serve.json の pid に SIGTERM を送る",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withRoot(async (root) => {
+      const child = new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "await new Promise((resolve) => setTimeout(resolve, 60_000));",
+        ],
+        stdin: "null",
+        stdout: "null",
+        stderr: "null",
+      }).spawn();
+      try {
+        await writeServeJson(root, { pid: child.pid, port: 1 });
+
+        const info = await stopServer(root);
+        const status = await child.status;
+
+        assertEquals(info.pid, child.pid);
+        assertEquals(status.signal, "SIGTERM");
+      } finally {
+        try {
+          child.kill();
+        } catch {
+          // Already reaped by the assertions above.
+        }
+      }
+    });
+  },
 });
 
 Deno.test({

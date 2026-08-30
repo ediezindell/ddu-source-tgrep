@@ -231,3 +231,20 @@ export async function ensureServer(
     }`,
   );
 }
+
+export async function stopServer(root: string): Promise<ServerInfo> {
+  const path = serveJsonPath(root);
+  let text: string;
+  try {
+    text = await Deno.readTextFile(path);
+  } catch (e: unknown) {
+    if (e instanceof Deno.errors.NotFound) {
+      throw new Error(`tgrep: no server info at ${path}`);
+    }
+    throw e;
+  }
+
+  const info = parseServeJson(text);
+  Deno.kill(info.pid, "SIGTERM");
+  return info;
+}
