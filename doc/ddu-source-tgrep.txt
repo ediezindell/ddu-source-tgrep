@@ -1,0 +1,264 @@
+*ddu-source-tgrep.txt*	tgrep source for ddu.vim
+
+CONTENTS					*ddu-source-tgrep-contents*
+
+Introduction    |ddu-source-tgrep-introduction|
+Install         |ddu-source-tgrep-install|
+Commands        |ddu-source-tgrep-commands|
+Examples        |ddu-source-tgrep-examples|
+Params          |ddu-source-tgrep-params|
+Server          |ddu-source-tgrep-server|
+
+
+==============================================================================
+INTRODUCTION					*ddu-source-tgrep-introduction*
+
+This source collects "tgrep" search results.
+
+"tgrep" keeps a trigram index in a background server and answers queries over
+TCP, so this source talks to that server instead of spawning a process per
+keystroke.  That makes it suited to live grep.
+
+==============================================================================
+INSTALL						*ddu-source-tgrep-install*
+
+Please install below plugins.
+
+https://github.com/Shougo/ddu.vim
+https://github.com/vim-denops/denops.vim
+
+And install below binary.
+https://github.com/microsoft/tgrep
+
+==============================================================================
+COMMANDS					*ddu-source-tgrep-commands*
+
+						*:DduTgrepStop*
+:DduTgrepStop [{path}]
+	Send SIGTERM to the "tgrep" server that serves {path}.
+	If {path} is omitted, the server root is resolved from the current
+	directory the same way the source resolves it.
+
+	This plugin never stops the server on its own.  The server outlives
+	Vim so that the next session reuses the warm index.
+
+==============================================================================
+EXAMPLES					*ddu-source-tgrep-examples*
+
+>vim
+    " live grep
+    " You need to make "volatile" option v:true.
+    " Note: the matchers should be empty for performance
+    command! DduTgrepLive call <SID>ddu_tgrep_live()
+    function! s:ddu_tgrep_live() abort
+      call ddu#start(#{
+            \   sources: [#{
+            \     name: 'tgrep',
+            \     options: #{
+            \       matchers: [],
+            \       volatile: v:true,
+            \     },
+            \   }],
+            \   uiParams: #{
+            \     ff: #{
+            \       ignoreEmpty: v:false,
+            \       autoResize: v:false,
+            \     }
+            \   },
+            \ })
+    endfunction
+
+    " Search for a fixed pattern, then filter the results.
+    nnoremap <space>/
+      \ <Cmd>call ddu#start(#{
+      \   sources: [#{
+      \     name: 'tgrep',
+      \   }],
+      \   sourceParams: #{
+      \     tgrep: #{
+      \       input: input('Pattern: '),
+      \     },
+      \   },
+      \ })<CR>
+
+    " Narrow the search down to the nearest project directory.
+    call ddu#custom#patch_global(#{
+        \   sourceParams: #{
+        \     tgrep: #{
+        \       scope: 'marker',
+        \       rootMarkers: ['deno.json', 'Cargo.toml'],
+        \     },
+        \   },
+        \ })
+
+    " Change the server root.
+    call ddu#start(#{
+        \   sources: [#{
+        \     name: 'tgrep',
+        \     options: #{ path: expand('~/src/project') },
+        \   }],
+        \ })
+<
+==============================================================================
+PARAMS						*ddu-source-tgrep-params*
+
+						*ddu-source-tgrep-param-cmd*
+cmd		(string)
+	Executable used to start the server ("{cmd} serve {root}").
+
+	Default: "tgrep"
+
+						*ddu-source-tgrep-param-input*
+input		(string)
+	Search input string.
+	Note: If |ddu-source-option-volatile| is true, |ddu-option-input| is
+	used instead.
+
+	Default: ""
+
+					*ddu-source-tgrep-param-scope*
+scope		(string)
+	Which part of the server root is searched.
+
+	"all"		The whole server root.
+
+	"cwd"		The current directory and below.
+
+	"marker"	The nearest directory at or above the current
+			directory that contains one of |ddu-source-tgrep-param-rootMarkers|.
+			If none is found, an error is shown; the search is
+			not widened to "all".
+
+	Default: "all"
+
+					*ddu-source-tgrep-param-rootMarkers*
+rootMarkers	(string[])
+	File names looked up when |ddu-source-tgrep-param-scope| is "marker".
+
+	Default: ["package.json", "deno.json", "Cargo.toml", "go.mod",
+	"pyproject.toml"]
+
+						*ddu-source-tgrep-param-globs*
+globs		(string[])
+	Extra path globs.  A leading "!" excludes.
+
+	Including globs are interpreted relative to the directory selected by
+	|ddu-source-tgrep-param-scope|, and match at any depth below it.  With
+	scope "cwd" in "src/app", "*.ts" searches "src/app/**/*.ts".  With
+	scope "all" they are used as they are.
+
+	Excluding globs ("!" prefixed) are passed through unchanged.  They do
+	not need the scope prefix, because the including globs already keep
+	the search inside the scope.
+
+	Note the asymmetry: an excluding glob is resolved against the server
+	root, not against the scope.  tgrep prepends "**/" only to a pattern
+	that contains no "/", so "!*_test.ts" excludes matches at any depth,
+	while "!vendor/**" excludes only the "vendor" directory directly
+	below the server root.  To exclude a directory inside the scope,
+	write its full path from the server root: "!src/app/vendor/**".
+
+	Default: []
+
+					*ddu-source-tgrep-param-caseMode*
+caseMode	(string)
+	How letter case is handled.
+
+	"smart"		Case insensitive unless the input contains an
+			uppercase letter.  The whole input string is
+			inspected, regular expression metacharacters
+			included, so a pattern such as "\S" or "\B" counts
+			as containing an uppercase letter and is searched
+			case sensitively.
+
+	"sensitive"	Always case sensitive.
+
+	"insensitive"	Always case insensitive.
+
+	Default: "smart"
+
+					*ddu-source-tgrep-param-fixedString*
+fixedString	(boolean)
+	Treat the input as a literal string instead of a regular expression.
+
+	Default: false
+
+						*ddu-source-tgrep-param-types*
+types		(string[])
+	ripgrep compatible file type filters ("-t" equivalent).
+
+	Default: []
+
+					*ddu-source-tgrep-param-maxItems*
+maxItems	(number)
+	Maximum number of items produced from one search.  Extra matches are
+	dropped on the client side.
+
+	Default: 10000
+
+					*ddu-source-tgrep-param-minInputLength*
+minInputLength	(number)
+	Inputs shorter than this are not searched at all.
+
+	Default: 2
+
+					*ddu-source-tgrep-param-highlights*
+highlights	(dictionary)
+	Highlight groups for "path", "lineNr" and "word".  An empty string
+	disables that highlight.
+
+	Default: #{ path: "Normal", lineNr: "Normal", word: "Search" }
+
+					*ddu-source-tgrep-param-serveArgs*
+serveArgs	(string[])
+	Extra arguments appended to "{cmd} serve {root}", such as
+	["--no-watch"].
+
+	Default: []
+
+						*ddu-source-tgrep-param-debug*
+debug		(boolean)
+	Write diagnostics to |:messages|: how the server was resolved
+	(reused or spawned, serve.json path, port, root, full command line,
+	whether "setsid" was used, and anything the server wrote to its
+	standard error while starting), and for each search the pattern, the
+	globs, the resolved case mode, the number of items, the elapsed time
+	and whether the response was discarded as stale.
+
+	Default: false
+
+==============================================================================
+SERVER						*ddu-source-tgrep-server*
+
+The server root is |ddu-source-option-path| when set, otherwise the nearest
+ancestor of the current directory that contains ".git", otherwise the current
+directory.
+
+On the first search of a ddu session the source reads "{root}/.tgrep/serve.json"
+and reuses the server recorded there when its process is alive and its port
+accepts connections.  Otherwise it starts "{cmd} serve {root}" and waits for
+serve.json to appear.
+
+The spawned server is always detached with unref() so that it outlives Vim.
+How far it is detached depends on the system:
+
+- When "setsid" is on $PATH, the server is started as "setsid {cmd} serve
+  {root}" and runs in a process group of its own.
+- Otherwise unref() is all there is.  Deno offers no way to put a child in
+  its own process group, so a signal sent to Vim's whole process group
+  (Ctrl-C in a terminal Vim, for instance) also reaches the server, and the
+  server dies with Vim.
+
+|ddu-source-tgrep-param-debug| reports which of the two was used.  Use
+|:DduTgrepStop| to stop the server deliberately.
+
+If "tgrep" is missing, the server fails to start, or the connection cannot be
+established, the error is reported and the search returns nothing.  This source
+never falls back to a serverless search.
+
+Because a live grep runs one search per keystroke, an error message is shown
+only once per message text.  The record is cleared every time the source is
+initialized, that is, on every |ddu#start()|.
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:noet:fen:noet:
