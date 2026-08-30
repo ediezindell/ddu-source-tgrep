@@ -133,8 +133,9 @@ export class Source extends BaseSource<Params> {
     return new ReadableStream({
       async start(controller) {
         const debug = createDebugLogger(args.denops, params.debug);
+        let input = params.input;
         try {
-          const input = args.sourceOptions.volatile ? args.input : params.input;
+          input = args.sourceOptions.volatile ? args.input : params.input;
           if (input.length < params.minInputLength) {
             return;
           }
@@ -197,7 +198,7 @@ export class Source extends BaseSource<Params> {
           }
         } catch (e: unknown) {
           if (abortController.signal.aborted) {
-            await debug(`search discarded as stale: pattern=${args.input}`);
+            await debug(`search discarded as stale: pattern=${input}`);
           } else if (e instanceof RpcMethodError && isRegexSyntaxError(e)) {
             await debug(`ignored regex syntax error: ${e.message}`);
           } else {

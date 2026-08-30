@@ -45,9 +45,10 @@ Deno.test("kind は file", () => {
 
 const testRoot = join("/tmp", "repo");
 
-function stubDenops(errors: string[] = []): Denops {
+function stubDenops(errors: string[] = [], cmds: string[] = []): Denops {
   return {
-    cmd(): Promise<void> {
+    cmd(command: string): Promise<void> {
+      cmds.push(command);
       return Promise.resolve();
     },
     call(name: string, ...callArgs: unknown[]): Promise<unknown> {
@@ -181,6 +182,37 @@ Deno.test("gather は regex 構文エラーを空結果にする", async () => {
   await source.onInit(onInitArgs(denops));
 
   assertEquals(await drain(source.gather(gatherArgs(denops, "foo("))), []);
+
+  closeSource(source, denops);
+  await server.close();
+});
+
+Deno.test("stale 破棄の debug ログは解決済みの入力を使い、生の args.input は使わない", async () => {
+  const cmds: string[] = [];
+  const denops = stubDenops([], cmds);
+  const server = await startFakeServer(() => {});
+  const source = sourceOn(server.port);
+  await source.onInit(onInitArgs(denops));
+
+  const stream = source.gather({
+    denops,
+    context: {},
+    options: {},
+    sourceOptions: { path: testRoot, volatile: false },
+    sourceParams: {
+      ...new Source().params(),
+      debug: true,
+      input: "resolvedPattern",
+    },
+    input: "rawKeystroke",
+  } as unknown as GatherArguments<Params>);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await stream.cancel("test-cancel");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assertEquals(cmds.some((c) => c.includes("resolvedPattern")), true);
+  assertEquals(cmds.some((c) => c.includes("rawKeystroke")), false);
 
   closeSource(source, denops);
   await server.close();
