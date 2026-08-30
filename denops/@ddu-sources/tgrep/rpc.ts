@@ -186,3 +186,51 @@ export class RpcClient {
     }
   }
 }
+
+export class RpcSession {
+  #port: number;
+  #client: RpcClient | undefined;
+
+  constructor(port: number) {
+    this.#port = port;
+  }
+
+  async call(
+    method: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    try {
+      const client = await this.#ensureClient();
+      return await client.call(method, params, signal);
+    } catch (e: unknown) {
+      if (!(e instanceof RpcConnectionError)) {
+        throw e;
+      }
+      this.close();
+      const client = await this.#ensureClient();
+      return await client.call(method, params, signal);
+    }
+  }
+
+  close(): void {
+    this.#client?.close();
+    this.#client = undefined;
+  }
+
+  async #ensureClient(): Promise<RpcClient> {
+    if (this.#client !== undefined && !this.#client.closed) {
+      return this.#client;
+    }
+    try {
+      this.#client = await RpcClient.connect(this.#port);
+    } catch (e: unknown) {
+      throw new RpcConnectionError(
+        `tgrep: cannot connect to 127.0.0.1:${this.#port}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
+    return this.#client;
+  }
+}
