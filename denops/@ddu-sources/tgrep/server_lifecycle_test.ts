@@ -250,3 +250,29 @@ Deno.test("probeServer はポートに接続できなければ undefined", async
     assertEquals(await probeServer(root), undefined);
   });
 });
+
+Deno.test({
+  name: "probeServer は pid が死んでいれば接続できるポートでも undefined",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withRoot(async (root) => {
+      const listener = listenLoopback();
+      const port = (listener.addr as Deno.NetAddr).port;
+
+      const child = new Deno.Command(Deno.execPath(), {
+        args: ["eval", "0"],
+        stdin: "null",
+        stdout: "null",
+        stderr: "null",
+      }).spawn();
+      const pid = child.pid;
+      await child.status;
+
+      await writeServeJson(root, { pid, port });
+
+      assertEquals(await probeServer(root), undefined);
+
+      listener.close();
+    });
+  },
+});
