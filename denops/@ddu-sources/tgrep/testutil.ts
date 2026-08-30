@@ -3,6 +3,8 @@ import { TextLineStream } from "@std/streams/text-line-stream";
 export type FakeServer = {
   port: number;
   requests: Record<string, unknown>[];
+  connectionCount: number;
+  dropConnections: () => void;
   close: () => Promise<void>;
 };
 
@@ -18,9 +20,11 @@ export function startFakeServer(
   const conns: Deno.Conn[] = [];
   const sessions: Promise<void>[] = [];
   const encoder = new TextEncoder();
+  const state = { connectionCount: 0 };
 
   const accepting = (async () => {
     for await (const conn of listener) {
+      state.connectionCount++;
       conns.push(conn);
       sessions.push((async () => {
         const writer = conn.writable.getWriter();
@@ -56,6 +60,18 @@ export function startFakeServer(
   return Promise.resolve({
     port: (listener.addr as Deno.NetAddr).port,
     requests,
+    get connectionCount() {
+      return state.connectionCount;
+    },
+    dropConnections: () => {
+      for (const conn of conns) {
+        try {
+          conn.close();
+        } catch {
+          // Already closed by the client side.
+        }
+      }
+    },
     close: async () => {
       for (const conn of conns) {
         try {

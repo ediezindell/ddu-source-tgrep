@@ -57,6 +57,31 @@ Deno.test("再接続後も切られたら RpcConnectionError を投げ、3 回�
   await server.close();
 });
 
+Deno.test("切断後に2つの call を同時に投げても接続は1本しか張られない", async () => {
+  const server = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({ jsonrpc: "2.0", result: request.id, id: request.id }),
+    );
+  });
+  const session = new RpcSession(server.port);
+
+  await session.call("search", { pattern: "warmup" });
+  assertEquals(server.connectionCount, 1);
+
+  server.dropConnections();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  await Promise.all([
+    session.call("search", { pattern: "one" }),
+    session.call("search", { pattern: "two" }),
+  ]);
+
+  assertEquals(server.connectionCount, 2);
+
+  session.close();
+  await server.close();
+});
+
 Deno.test("サーバーが居ないと RpcConnectionError になる", async () => {
   const server = await startFakeServer(async () => {});
   const port = server.port;

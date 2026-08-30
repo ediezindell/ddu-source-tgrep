@@ -190,6 +190,7 @@ export class RpcClient {
 export class RpcSession {
   #port: number;
   #client: RpcClient | undefined;
+  #connecting: Promise<RpcClient> | undefined;
 
   constructor(port: number) {
     this.#port = port;
@@ -218,19 +219,28 @@ export class RpcSession {
     this.#client = undefined;
   }
 
-  async #ensureClient(): Promise<RpcClient> {
+  #ensureClient(): Promise<RpcClient> {
     if (this.#client !== undefined && !this.#client.closed) {
-      return this.#client;
+      return Promise.resolve(this.#client);
     }
-    try {
-      this.#client = await RpcClient.connect(this.#port);
-    } catch (e: unknown) {
-      throw new RpcConnectionError(
-        `tgrep: cannot connect to 127.0.0.1:${this.#port}: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
+    if (this.#connecting !== undefined) {
+      return this.#connecting;
     }
-    return this.#client;
+    this.#connecting = (async () => {
+      try {
+        const client = await RpcClient.connect(this.#port);
+        this.#client = client;
+        return client;
+      } catch (e: unknown) {
+        throw new RpcConnectionError(
+          `tgrep: cannot connect to 127.0.0.1:${this.#port}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      } finally {
+        this.#connecting = undefined;
+      }
+    })();
+    return this.#connecting;
   }
 }
