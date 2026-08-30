@@ -42,7 +42,11 @@ kind は `file`)に従う。参考実装は ddu-source-rg。
 ### サーバーライフサイクル(server.ts)
 
 1. `<root>/.tgrep/serve.json` を読み、pid 生存 + TCP 接続確認できれば既存サーバーに接続
-2. 無ければ `tgrep serve <root>` を detached で spawn(`unref` + プロセスグループ分離)。
+2. 無ければ `tgrep serve <root>` を detached で spawn。`unref` は常に行い、プロセスグループ分離は
+   `setsid` が PATH にある場合だけ `setsid tgrep serve <root>` の形で行う(Deno の `Deno.Command` に
+   プロセスグループを分離する API が無いため)。`setsid` が無い環境では `unref` のみとなり、
+   Vim のプロセスグループ全体に飛ぶシグナル(端末 Vim の Ctrl-C 等)がサーバーにも届く。
+   どちらのモードで起動したかは debug 出力に載せ、制約は doc に明記する。
    serve.json が現れるまで短いポーリングで待って接続。flock で先を越された場合(多重 Vim 等)は
    serve.json を読み直して接続に切替
 3. 起動タイミングは `onInit`(ddu が UI 描画前に完了を待つ)
@@ -57,7 +61,9 @@ kind は `file`)に従う。参考実装は ddu-source-rg。
   `rootMarkers` のいずれかを含む最初のディレクトリを検索範囲にする。
   見つからなければエラー表示(黙って all に広げない)
 - 絞り込みは、決まったディレクトリの root 相対パスを `glob: ["<relpath>/**"]` として
-  search リクエストに付与して実現する
+  search リクエストに付与して実現する。`globs` が指定されている場合は、その include を
+  `<relpath>/**/<glob>` に書き換えて 1 本にまとめる(tgrep の `GlobFilter` は include を OR で
+  評価するので、並べて渡すと scope の絞り込みが無効化されるため)
 
 ## 検索フロー(gather)
 
@@ -78,8 +84,8 @@ kind は `file`(ddu-kind-file の契約に従う)。
 
 - `word`: `"path:line:col: text"`
 - `action`: `{ path: root 基準の絶対パス, lineNr, col, text }`
-- `highlights`: パス / 行番号 / マッチ語の 3 種。マッチ語の位置はレスポンスの spans から算出し、
-  col / width は UTF-8 バイト長で計算(マルチバイト対応)
+- `highlights`: パス / 行番号 / マッチ語の 3 種。マッチ語の列はレスポンスの columns(エンコーディング
+  補正済み)、幅は spans から算出し、col / width は UTF-8 バイト長で計算(マルチバイト対応)
 
 ## source params
 
@@ -89,7 +95,7 @@ kind は `file`(ddu-kind-file の契約に従う)。
 | `input` | `""` | 非 volatile 時の検索語 |
 | `scope` | `"all"` | `"all"` / `"cwd"` / `"marker"` |
 | `rootMarkers` | `["package.json", "deno.json", "Cargo.toml", "go.mod", "pyproject.toml"]` | `scope: "marker"` 時の探索対象 |
-| `globs` | `[]` | 追加 glob(`!` 除外可、RPC にそのまま渡す) |
+| `globs` | `[]` | 追加 glob。include は scope 相対で解釈し、scope 有効時は scope パスを前置して AND 合成する(scope が `src/app` なら `*.ts` → `src/app/**/*.ts`)。`!` 除外はそのまま渡す |
 | `caseMode` | `"smart"` | `smart` / `sensitive` / `insensitive` |
 | `fixedString` | `false` | 固定文字列検索 |
 | `types` | `[]` | ripgrep 互換ファイルタイプ(`-t` 相当) |
@@ -117,6 +123,8 @@ fail-loud を原則とする。
 - RPC エラーのうち regex 構文エラーだけは無視して空結果にする
   (live grep では入力途中の不正 regex が毎打鍵発生するため)。それ以外の RPC エラーは表示
 - `scope: "marker"` で marker が見つからない場合はエラー表示(all に広げない)
+- live grep は 1 打鍵 1 gather なので、同一メッセージの `printError` は Source 内で記憶して 1 回だけ表示する
+  (記憶は `onInit` = `ddu#start` ごとにリセット)。抑制するのは表示の重複だけで、握り潰しはしない
 
 ## 検証方針
 
