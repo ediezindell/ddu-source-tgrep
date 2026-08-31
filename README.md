@@ -26,18 +26,15 @@ $ cargo install --git https://github.com/microsoft/tgrep tgrep-cli
 
 ## Configuration
 
-```vim
-call ddu#custom#patch_global(#{
-    \   sourceParams: #{
-    \     tgrep: #{
-    \       caseMode: 'smart',
-    \       scope: 'all',
-    \     },
-    \   },
-    \ })
-```
+The source takes its pattern from one of two places, and you have to pick one.
+Set the `volatile` source option to `v:true` and it reads whatever you type
+into ddu, which is what live grep wants. Leave `volatile` off and it reads the
+`input` source param instead, which is empty until you set it — and an empty
+pattern is shorter than `minInputLength`, so the search returns before it ever
+reaches the server. You get no results and no error message.
 
-Live grep:
+Live grep. Empty `matchers` leaves the filtering to the server, which has
+already done it:
 
 ```vim
 command! DduTgrepLive call s:ddu_tgrep_live()
@@ -52,6 +49,31 @@ function! s:ddu_tgrep_live() abort
         \   },
         \ })
 endfunction
+```
+
+A fixed pattern, filtered afterwards by ddu:
+
+```vim
+nnoremap <space>/
+    \ <Cmd>call ddu#start(#{
+    \   sources: [#{ name: 'tgrep' }],
+    \   sourceParams: #{
+    \     tgrep: #{ input: input('Pattern: ') },
+    \   },
+    \ })<CR>
+```
+
+Source params are set the usual way:
+
+```vim
+call ddu#custom#patch_global(#{
+    \   sourceParams: #{
+    \     tgrep: #{
+    \       caseMode: 'smart',
+    \       scope: 'all',
+    \     },
+    \   },
+    \ })
 ```
 
 ## Server lifecycle
