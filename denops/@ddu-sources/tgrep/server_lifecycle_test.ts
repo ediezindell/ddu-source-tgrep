@@ -1,16 +1,24 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import { join } from "@std/path/join";
 import { delay } from "@std/async/delay";
 import {
   ensureServer,
   probeServer,
+  readServeLog,
   type SpawnArgs,
   type SpawnResult,
   spawnServer,
   stopServer,
 } from "./server.ts";
 
-async function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
+async function withRoot(
+  fn: (root: string) => void | Promise<void>,
+): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "ddu-tgrep-" });
   try {
     await fn(root);
@@ -42,6 +50,103 @@ function fakeSpawn(
 ): SpawnResult {
   return { commandLine, detached: false, stderr: () => stderr };
 }
+
+Deno.test("readServeLog はログがまだ書かれていなければ空文字を返す", async () => {
+  await withRoot((root) => {
+    // Act & Assert
+    assertEquals(readServeLog(root), "");
+  });
+});
+
+Deno.test("readServeLog はサーバーが書き残した内容をそのまま返す", async () => {
+  await withRoot(async (root) => {
+    // Arrange
+    await Deno.mkdir(join(root, ".tgrep"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, ".tgrep", "serve.log"),
+      "another tgrep server already holds the lock",
+    );
+
+    // Act & Assert
+    assertEquals(
+      readServeLog(root),
+      "another tgrep server already holds the lock",
+    );
+  });
+});
+
+Deno.test("readServeLog は長すぎるログを先頭 4096 文字だけにして返す", async () => {
+  await withRoot(async (root) => {
+    // Arrange
+    await Deno.mkdir(join(root, ".tgrep"), { recursive: true });
+    await Deno.writeTextFile(
+      join(root, ".tgrep", "serve.log"),
+      "x".repeat(5000),
+    );
+
+    // Act
+    const log = readServeLog(root);
+
+    // Assert
+    assertEquals(log, "x".repeat(4096));
+  });
+});
+
+Deno.test({
+  name: "spawnServer はログの書き込み先ディレクトリを起動前に用意する",
+  ignore: Deno.build.os === "windows",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withRoot(async (root) => {
+      // Act
+      spawnServer({ cmd: "/bin/true", root, serveArgs: [] });
+
+      // Assert
+      assertEquals((await Deno.stat(join(root, ".tgrep"))).isDirectory, true);
+    });
+  },
+});
+
+Deno.test({
+  name: "spawnServer はサーバーの stderr をログファイルへ向けて起動する",
+  ignore: Deno.build.os === "windows",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withRoot((root) => {
+      // Act
+      const { commandLine } = spawnServer({
+        cmd: "/bin/true",
+        root,
+        serveArgs: [],
+      });
+
+      // Assert
+      assertStringIncludes(
+        commandLine.at(-1) ?? "",
+        `2> '${join(root, ".tgrep", "serve.log")}'`,
+      );
+    });
+  },
+});
+
+Deno.test({
+  name: "spawnServer の stderr は起動したプロセスが書き残した内容を返す",
+  ignore: Deno.build.os === "windows",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withRoot(async (root) => {
+      // Arrange: 引数を解釈できない cmd を使い、サーバー役にエラーを吐かせる
+      const spawned = spawnServer({ cmd: "/bin/ls", root, serveArgs: [] });
+      await delay(500);
+
+      // Assert
+      assertStringIncludes(spawned.stderr(), "serve");
+    });
+  },
+});
 
 Deno.test("probeServer は serve.json が無ければ undefined", async () => {
   await withRoot(async (root) => {

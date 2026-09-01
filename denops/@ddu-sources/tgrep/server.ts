@@ -137,6 +137,42 @@ function commandExists(cmd: string): boolean {
   return isExecutableInPath(cmd);
 }
 
+export function readServeLog(root: string): string {
+  try {
+    return Deno.readTextFileSync(join(root, ".tgrep", "serve.log"))
+      .slice(0, STDERR_CAPTURE_BYTES);
+  } catch {
+    return "";
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function buildServeCommandLine(args: {
+  cmd: string;
+  root: string;
+  serveArgs: string[];
+  setsid: boolean;
+  shell: boolean;
+}): string[] {
+  if (!args.shell) {
+    return [args.cmd, "serve", args.root, ...args.serveArgs];
+  }
+  const script = [
+    "exec",
+    shellQuote(args.cmd),
+    "serve",
+    shellQuote(args.root),
+    ...args.serveArgs.map(shellQuote),
+    "2>",
+    shellQuote(join(args.root, ".tgrep", "serve.log")),
+  ].join(" ");
+  const shellLine = ["sh", "-c", script];
+  return args.setsid ? ["setsid", ...shellLine] : shellLine;
+}
+
 export function spawnServer(args: SpawnArgs): SpawnResult {
   if (Deno.build.os !== "windows" && !commandExists(args.cmd)) {
     throw new Error(
@@ -144,33 +180,31 @@ export function spawnServer(args: SpawnArgs): SpawnResult {
     );
   }
 
-  const serveLine = [args.cmd, "serve", args.root, ...args.serveArgs];
+  Deno.mkdirSync(join(args.root, ".tgrep"), { recursive: true });
+
   const detached = isExecutableInPath("setsid");
-  const commandLine = detached ? ["setsid", ...serveLine] : serveLine;
+  const commandLine = buildServeCommandLine({
+    cmd: args.cmd,
+    root: args.root,
+    serveArgs: args.serveArgs,
+    setsid: detached,
+    shell: isExecutableInPath("sh"),
+  });
 
   const child = new Deno.Command(commandLine[0], {
     args: commandLine.slice(1),
     cwd: args.root,
     stdin: "null",
     stdout: "null",
-    stderr: "piped",
+    stderr: "null",
   }).spawn();
 
-  let captured = "";
-  const decoder = new TextDecoder();
-  (async () => {
-    for await (const chunk of child.stderr) {
-      if (captured.length < STDERR_CAPTURE_BYTES) {
-        captured += decoder.decode(chunk, { stream: true });
-      }
-    }
-  })().catch(() => {});
   child.unref();
 
   return {
     commandLine,
     detached,
-    stderr: () => captured.slice(0, STDERR_CAPTURE_BYTES),
+    stderr: () => readServeLog(args.root),
   };
 }
 
