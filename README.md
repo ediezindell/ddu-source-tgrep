@@ -76,6 +76,34 @@ call ddu#custom#patch_global(#{
     \ })
 ```
 
+## Hidden files
+
+tgrep does not index hidden files and directories, and `tgrep serve` cannot be
+told otherwise. It rejects `--hidden` outright, and an index built with
+`tgrep index --hidden` does not survive: the server compares the index against
+its own walk at startup, the hidden entries are missing from that walk, and it
+evicts them as deleted. Passing `--hidden` through `serveArgs` therefore does
+not widen the search — it stops the server from starting at all.
+
+So a repository that keeps its files under a hidden directory returns nothing,
+without an error. Dotfiles are the usual case: everything lives under
+`.config/`, and only the handful of files at the top level is searchable.
+
+Hidden is judged relative to the server root, so pointing the root inside the
+hidden directory searches it:
+
+```vim
+call ddu#custom#patch_global(#{
+    \   sourceOptions: #{
+    \     tgrep: #{ path: expand('~/dotfiles/.config') },
+    \   },
+    \ })
+```
+
+The root also decides where `.tgrep/` is written and what is out of reach:
+with the root at `~/dotfiles/.config`, the files above it are no longer
+searched. (Checked against tgrep 1.0.2.)
+
 ## Server lifecycle
 
 The source starts `tgrep serve <root>` on demand and leaves it running after
