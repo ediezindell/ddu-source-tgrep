@@ -7,6 +7,7 @@ Install         |ddu-source-tgrep-install|
 Commands        |ddu-source-tgrep-commands|
 Examples        |ddu-source-tgrep-examples|
 Params          |ddu-source-tgrep-params|
+Hidden files    |ddu-source-tgrep-hidden|
 Server          |ddu-source-tgrep-server|
 
 
@@ -214,6 +215,12 @@ serveArgs	(string[])
 	Extra arguments appended to "{cmd} serve {root}", such as
 	["--no-watch"].
 
+	Note: "tgrep serve" refuses the arguments that decide which files
+	belong in the index, "--hidden" among them, even though its own
+	--help lists them.  It exits instead of starting, and the source
+	then reports that the server is unavailable.  See
+	|ddu-source-tgrep-hidden|.
+
 	Default: []
 
 						*ddu-source-tgrep-param-debug*
@@ -226,6 +233,33 @@ debug		(boolean)
 	and whether the response was discarded as stale.
 
 	Default: false
+
+==============================================================================
+HIDDEN FILES					*ddu-source-tgrep-hidden*
+
+"tgrep" does not index hidden files and directories, and "tgrep serve" cannot
+be told otherwise.  It rejects "--hidden", and an index built with
+"tgrep index --hidden" does not survive: the server compares the index against
+its own walk at startup, does not see the hidden entries there and evicts them
+as deleted.
+
+A repository that keeps its files under a hidden directory therefore returns
+nothing, without an error.  Dotfiles are the usual case: everything lives
+under ".config", and only the files at the top level are searchable.
+
+Hidden is judged relative to the server root, so pointing the root inside the
+hidden directory searches it.
+>vim
+    call ddu#custom#patch_global(#{
+        \   sourceOptions: #{
+        \     tgrep: #{ path: expand('~/dotfiles/.config') },
+        \   },
+        \ })
+<
+The root also decides where ".tgrep" is written and what is out of reach: with
+the root at "~/dotfiles/.config", the files above it are no longer searched.
+
+Checked against "tgrep" 1.0.2.
 
 ==============================================================================
 SERVER						*ddu-source-tgrep-server*
