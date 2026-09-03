@@ -425,3 +425,21 @@ Deno.test({
     });
   },
 });
+
+Deno.test("readServeLog は索引置き場が指定されていればそちらのログを読む", async () => {
+  await withRoot(async (root) => {
+    // Arrange
+    const indexPath = join(root, "cache", "entry");
+    await Deno.mkdir(indexPath, { recursive: true });
+    await Deno.writeTextFile(
+      join(indexPath, "serve.log"),
+      "no existing index found, will build in background",
+    );
+
+    // Act & Assert
+    assertEquals(
+      readServeLog(root, indexPath),
+      "no existing index found, will build in background",
+    );
+  });
+});
