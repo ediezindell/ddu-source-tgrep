@@ -14,6 +14,20 @@ Deno.test("serveJsonPath は <root>/.tgrep/serve.json を返す", () => {
   );
 });
 
+Deno.test("serveJsonPath は索引置き場が指定されていればそちらを見る", () => {
+  assertEquals(
+    serveJsonPath(join("/tmp", "workspace"), join("/tmp", "cache", "entry")),
+    join("/tmp", "cache", "entry", "serve.json"),
+  );
+});
+
+Deno.test("serveJsonPath は索引置き場ごとに別の serve.json を指す", () => {
+  assertEquals(
+    serveJsonPath(join("/tmp", "workspace"), join("/tmp", "cache", "other")),
+    join("/tmp", "cache", "other", "serve.json"),
+  );
+});
+
 Deno.test("buildServeCommandLine は sh 経由でサーバーの stderr を .tgrep/serve.log に向ける", () => {
   // Arrange
   const root = join("/tmp", "workspace");
@@ -204,4 +218,98 @@ Deno.test({
 
     assertEquals(isProcessAlive(pid), false);
   },
+});
+
+Deno.test("buildServeCommandLine は索引置き場をサーバーに伝える", () => {
+  // Arrange
+  const root = join("/tmp", "workspace");
+  const indexPath = join("/tmp", "cache", "entry");
+
+  // Act
+  const commandLine = buildServeCommandLine({
+    cmd: "tgrep",
+    root,
+    serveArgs: [],
+    setsid: false,
+    shell: true,
+    indexPath,
+  });
+
+  // Assert
+  assertEquals(
+    commandLine[2].includes(`--index-path '${indexPath}'`),
+    true,
+    commandLine[2],
+  );
+});
+
+Deno.test("buildServeCommandLine は索引置き場ごとに違う場所をサーバーに伝える", () => {
+  // Arrange
+  const root = join("/tmp", "workspace");
+  const indexPath = join("/tmp", "cache", "other");
+
+  // Act
+  const commandLine = buildServeCommandLine({
+    cmd: "tgrep",
+    root,
+    serveArgs: [],
+    setsid: false,
+    shell: true,
+    indexPath,
+  });
+
+  // Assert
+  assertEquals(
+    commandLine[2].includes(`--index-path '${indexPath}'`),
+    true,
+    commandLine[2],
+  );
+});
+
+Deno.test("buildServeCommandLine は索引置き場を使うときサーバーのログもそこへ書かせる", () => {
+  // Arrange
+  const root = join("/tmp", "workspace");
+  const indexPath = join("/tmp", "cache", "entry");
+
+  // Act
+  const commandLine = buildServeCommandLine({
+    cmd: "tgrep",
+    root,
+    serveArgs: [],
+    setsid: false,
+    shell: true,
+    indexPath,
+  });
+
+  // Assert
+  assertEquals(
+    commandLine[2].endsWith(`2> '${join(indexPath, "serve.log")}'`),
+    true,
+    commandLine[2],
+  );
+});
+
+Deno.test("buildServeCommandLine は sh が無くても索引置き場をサーバーに伝える", () => {
+  // Arrange
+  const root = join("/tmp", "workspace");
+  const indexPath = join("/tmp", "cache", "entry");
+
+  // Act
+  const commandLine = buildServeCommandLine({
+    cmd: "tgrep",
+    root,
+    serveArgs: [],
+    setsid: false,
+    shell: false,
+    indexPath,
+  });
+
+  // Assert
+  assertEquals(commandLine, [
+    "tgrep",
+    "serve",
+    root,
+    "--index-path",
+    indexPath,
+  ]);
 });

@@ -12,8 +12,12 @@ export type ServerInfo = {
   port: number;
 };
 
-export function serveJsonPath(root: string): string {
-  return join(root, ".tgrep", "serve.json");
+function stateDir(root: string, indexPath?: string): string {
+  return indexPath ?? join(root, ".tgrep");
+}
+
+export function serveJsonPath(root: string, indexPath?: string): string {
+  return join(stateDir(root, indexPath), "serve.json");
 }
 
 export function parseServeJson(text: string): ServerInfo {
@@ -137,9 +141,11 @@ function commandExists(cmd: string): boolean {
   return isExecutableInPath(cmd);
 }
 
-export function readServeLog(root: string): string {
+export function readServeLog(root: string, indexPath?: string): string {
   try {
-    return Deno.readTextFileSync(join(root, ".tgrep", "serve.log"))
+    return Deno.readTextFileSync(
+      join(stateDir(root, indexPath), "serve.log"),
+    )
       .slice(0, STDERR_CAPTURE_BYTES);
   } catch {
     return "";
@@ -156,18 +162,30 @@ export function buildServeCommandLine(args: {
   serveArgs: string[];
   setsid: boolean;
   shell: boolean;
+  indexPath?: string;
 }): string[] {
   if (!args.shell) {
-    return [args.cmd, "serve", args.root, ...args.serveArgs];
+    return [
+      args.cmd,
+      "serve",
+      args.root,
+      ...(args.indexPath === undefined ? [] : ["--index-path", args.indexPath]),
+      ...args.serveArgs,
+    ];
   }
   const script = [
     "exec",
     shellQuote(args.cmd),
     "serve",
     shellQuote(args.root),
+    ...(args.indexPath === undefined
+      ? []
+      : ["--index-path", shellQuote(args.indexPath)]),
     ...args.serveArgs.map(shellQuote),
     "2>",
-    shellQuote(join(args.root, ".tgrep", "serve.log")),
+    shellQuote(
+      join(stateDir(args.root, args.indexPath), "serve.log"),
+    ),
   ].join(" ");
   const shellLine = ["sh", "-c", script];
   return args.setsid ? ["setsid", ...shellLine] : shellLine;
