@@ -160,8 +160,9 @@ export class Source extends BaseSource<Params> {
 
     this.#reported.clear();
     this.#closeServers();
+
+    let mainServer: ServerEntry;
     try {
-      const servers: ServerEntry[] = [];
       const main = await this.#ensureServer({
         cmd: args.sourceParams.cmd,
         root: this.#root,
@@ -170,9 +171,22 @@ export class Source extends BaseSource<Params> {
         spawn: this.#spawn,
         timeoutMs: SPAWN_TIMEOUT_MS,
       });
-      servers.push({ session: new RpcSession(main.port), root: this.#root });
+      mainServer = { session: new RpcSession(main.port), root: this.#root };
+    } catch (e: unknown) {
+      await this.#reportOnce(args.denops, e);
+      return;
+    }
 
-      for (const dir of await this.#hiddenDirs()) {
+    const servers: ServerEntry[] = [mainServer];
+    let hiddenDirs: string[];
+    try {
+      hiddenDirs = await this.#hiddenDirs();
+    } catch (e: unknown) {
+      await debug(`failed to discover hidden dirs: ${reportKey(e)}`);
+      hiddenDirs = [];
+    }
+    for (const dir of hiddenDirs) {
+      try {
         const indexPath = hiddenIndexPath({
           cacheBase: this.#cacheBaseDir(),
           root: this.#root,
@@ -191,18 +205,17 @@ export class Source extends BaseSource<Params> {
           session: new RpcSession(info.port),
           root: join(this.#root, dir),
         });
+      } catch (e: unknown) {
+        await debug(`failed to start hidden server for ${dir}: ${reportKey(e)}`);
       }
-
-      this.#servers = servers;
-      await debug(
-        `initialized ${servers.length} server(s): root=${this.#root} hidden=${
-          JSON.stringify(servers.slice(1).map((s) => s.root))
-        }`,
-      );
-    } catch (e: unknown) {
-      this.#closeServers();
-      await this.#reportOnce(args.denops, e);
     }
+
+    this.#servers = servers;
+    await debug(
+      `initialized ${servers.length} server(s): root=${this.#root} hidden=${
+        JSON.stringify(servers.slice(1).map((s) => s.root))
+      }`,
+    );
   }
 
   async #hiddenDirs(): Promise<string[]> {
@@ -284,7 +297,7 @@ export class Source extends BaseSource<Params> {
               pattern: input,
               caseInsensitive,
               fixedString: params.fixedString,
-              glob: server.root === root ? scopeGlobs : undefined,
+              glob: server.root === root ? scopeGlobs : params.globs,
               types: params.types,
               highlights: params.highlights,
               maxItems: params.maxItems,
@@ -293,7 +306,10 @@ export class Source extends BaseSource<Params> {
           );
           const results = await Promise.all(requests);
 
-          const items = results.flatMap((result) => result);
+          const items = results.flatMap((result) => result).slice(
+            0,
+            params.maxItems,
+          );
           await debug(
             `search done: items=${items.length} roundtrip_ms=${
               Date.now() - startedAt
