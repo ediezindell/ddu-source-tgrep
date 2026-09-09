@@ -1,4 +1,6 @@
 import { join } from "@std/path/join";
+import { cacheBaseDir } from "./cache.ts";
+import { parseGitignore } from "./gitignore.ts";
 
 const ALWAYS_EXCLUDED = new Set([".git", ".tgrep"]);
 
@@ -34,4 +36,46 @@ export function findHiddenDirs(args: {
       !args.isIgnored(entry.name)
     )
     .map((entry) => entry.name);
+}
+
+export type DirEntry = { name: string; isDirectory: boolean };
+
+export async function listHiddenDirs(args: {
+  root: string;
+  listEntries?: (root: string) => Promise<DirEntry[]>;
+  readGitignore?: (root: string) => Promise<string>;
+}): Promise<string[]> {
+  const listEntries = args.listEntries ?? (async (root: string) => {
+    const entries: DirEntry[] = [];
+    try {
+      for await (const entry of Deno.readDir(root)) {
+        entries.push({ name: entry.name, isDirectory: entry.isDirectory });
+      }
+    } catch {
+      return [];
+    }
+    return entries;
+  });
+
+  const readGitignore = args.readGitignore ?? (async (root: string) => {
+    try {
+      return await Deno.readTextFile(join(root, ".gitignore"));
+    } catch (e: unknown) {
+      if (e instanceof Deno.errors.NotFound) {
+        return "";
+      }
+      throw e;
+    }
+  });
+
+  const entries = await listEntries(args.root);
+  const gitignore = await readGitignore(args.root);
+  const isIgnored = parseGitignore(gitignore);
+  return findHiddenDirs({ entries, isIgnored });
+}
+
+export async function listHiddenIndexPaths(root: string): Promise<string[]> {
+  const dirs = await listHiddenDirs({ root });
+  const cacheBase = cacheBaseDir();
+  return dirs.map((dir) => hiddenIndexPath({ cacheBase, root, dir }));
 }

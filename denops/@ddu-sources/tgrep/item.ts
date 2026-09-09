@@ -1,5 +1,6 @@
 import type { ActionData } from "@shougo/ddu-kind-file";
 import type { Item, ItemHighlight } from "@shougo/ddu-vim/types";
+import { relative } from "@std/path/relative";
 import { resolve } from "@std/path/resolve";
 
 export type CaseMode = "smart" | "sensitive" | "insensitive";
@@ -64,6 +65,7 @@ export function parseSearchResult(value: unknown): SearchResult {
 export function matchRowToItem(args: {
   row: unknown;
   root: string;
+  mainRoot?: string;
   highlights: Partial<HighlightGroup>;
 }): Item<ActionData> | undefined {
   if (args.row === null || typeof args.row !== "object") {
@@ -109,8 +111,10 @@ export function matchRowToItem(args: {
   }
   const col: number = row.columns[0];
 
+  const fullPath = resolve(args.root, file);
+  const displayFile = relative(args.mainRoot ?? args.root, fullPath);
   const text = content.replace(/\r?\n$/, "");
-  const header = `${file}:${line}:${col}: `;
+  const header = `${displayFile}:${line}:${col}: `;
 
   const hlGroupPath = args.highlights.path ?? "";
   const hlGroupLineNr = args.highlights.lineNr ?? "";
@@ -122,14 +126,14 @@ export function matchRowToItem(args: {
       name: "path",
       hl_group: hlGroupPath,
       col: 1,
-      width: utf8Length(file),
+      width: utf8Length(displayFile),
     });
   }
   if (hlGroupLineNr !== "") {
     highlights.push({
       name: "lineNr",
       hl_group: hlGroupLineNr,
-      col: utf8Length(file) + 2,
+      col: utf8Length(displayFile) + 2,
       width: utf8Length(String(line)),
     });
   }
@@ -145,7 +149,7 @@ export function matchRowToItem(args: {
   return {
     word: header + text,
     action: {
-      path: resolve(args.root, file),
+      path: fullPath,
       lineNr: line,
       col,
       text,
@@ -157,6 +161,7 @@ export function matchRowToItem(args: {
 export function matchRowsToItems(args: {
   rows: unknown[];
   root: string;
+  mainRoot?: string;
   highlights: Partial<HighlightGroup>;
   maxItems: number;
 }): Item<ActionData>[] {
@@ -168,6 +173,7 @@ export function matchRowsToItems(args: {
     const item = matchRowToItem({
       row,
       root: args.root,
+      mainRoot: args.mainRoot,
       highlights: args.highlights,
     });
     if (item !== undefined) {

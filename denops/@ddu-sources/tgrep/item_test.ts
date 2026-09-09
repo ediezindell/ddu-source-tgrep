@@ -70,6 +70,28 @@ Deno.test("matchRowToItem は word / action / highlights を組み立てる", ()
   ]);
 });
 
+Deno.test("matchRowToItem は mainRoot が指定されていればメインリポジトリ相対で word を組み立てる", () => {
+  const hiddenRoot = join(root, ".config");
+  const item = matchRowToItem({
+    row: {
+      type: "match",
+      file: join("nvim", "init.lua"),
+      line: 10,
+      content: "vim.opt.number = true\n",
+      spans: [[0, 14]],
+      columns: [1],
+    },
+    root: hiddenRoot,
+    mainRoot: root,
+    highlights,
+  });
+
+  const displayFile = join(".config", "nvim", "init.lua");
+  assertEquals(item?.word, `${displayFile}:10:1: vim.opt.number = true`);
+  assertEquals(item?.action?.path, join(hiddenRoot, "nvim", "init.lua"));
+  assertEquals(item?.highlights?.[0].width, displayFile.length);
+});
+
 Deno.test("matchRowToItem はマルチバイト行でも UTF-8 バイト長で計算する", () => {
   const item = matchRowToItem({
     row: {

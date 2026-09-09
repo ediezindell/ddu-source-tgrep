@@ -14,7 +14,7 @@ import { join } from "@std/path/join";
 import { createDebugLogger } from "./debug.ts";
 import { cacheBaseDir } from "./cache.ts";
 import { parseGitignore } from "./gitignore.ts";
-import { findHiddenDirs, hiddenIndexPath } from "./hidden.ts";
+import { hiddenIndexPath, listHiddenDirs } from "./hidden.ts";
 import {
   type CaseMode,
   type HighlightGroup,
@@ -94,6 +94,7 @@ async function readRootGitignore(root: string): Promise<string> {
 
 async function searchServer(args: {
   server: ServerEntry;
+  mainRoot: string;
   pattern: string;
   caseInsensitive: boolean;
   fixedString: boolean;
@@ -116,6 +117,7 @@ async function searchServer(args: {
   return matchRowsToItems({
     rows: result.matches,
     root: args.server.root,
+    mainRoot: args.mainRoot,
     highlights: args.highlights,
     maxItems: args.maxItems,
   });
@@ -160,8 +162,7 @@ export class Source extends BaseSource<Params> {
 
     this.#reported.clear();
     this.#closeServers();
-
-    let mainServer: ServerEntry;
+    const servers: ServerEntry[] = [];
     try {
       const main = await this.#ensureServer({
         cmd: args.sourceParams.cmd,
@@ -171,20 +172,14 @@ export class Source extends BaseSource<Params> {
         spawn: this.#spawn,
         timeoutMs: SPAWN_TIMEOUT_MS,
       });
-      mainServer = { session: new RpcSession(main.port), root: this.#root };
+      servers.push({ session: new RpcSession(main.port), root: this.#root });
     } catch (e: unknown) {
+      this.#closeServers();
       await this.#reportOnce(args.denops, e);
       return;
     }
 
-    const servers: ServerEntry[] = [mainServer];
-    let hiddenDirs: string[];
-    try {
-      hiddenDirs = await this.#hiddenDirs();
-    } catch (e: unknown) {
-      await debug(`failed to discover hidden dirs: ${reportKey(e)}`);
-      hiddenDirs = [];
-    }
+    const hiddenDirs = await this.#hiddenDirs();
     for (const dir of hiddenDirs) {
       try {
         const indexPath = hiddenIndexPath({
@@ -219,9 +214,11 @@ export class Source extends BaseSource<Params> {
   }
 
   async #hiddenDirs(): Promise<string[]> {
-    const entries = await this.#listEntries(this.#root);
-    const ignored = parseGitignore(await this.#readGitignore(this.#root));
-    return findHiddenDirs({ entries, isIgnored: ignored });
+    return await listHiddenDirs({
+      root: this.#root,
+      listEntries: this.#listEntries,
+      readGitignore: this.#readGitignore,
+    });
   }
 
   #reportOnce(denops: Denops, error: unknown): Promise<void> {
@@ -294,6 +291,7 @@ export class Source extends BaseSource<Params> {
           const requests = servers.map((server) =>
             searchServer({
               server,
+              mainRoot: root,
               pattern: input,
               caseInsensitive,
               fixedString: params.fixedString,
