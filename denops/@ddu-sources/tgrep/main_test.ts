@@ -88,6 +88,9 @@ function closeSource(source: Source, denops: Denops): void {
 function sourceOn(port: number): Source {
   return new Source({
     ensureServer: () => Promise.resolve({ pid: Deno.pid, port }),
+    listEntries: () => Promise.resolve([]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
   });
 }
 
@@ -109,6 +112,57 @@ Deno.test("gather は minInputLength 未満の入力で何も流さない", asyn
   assertEquals(await drain(source.gather(gatherArgs(denops, "a"))), []);
 
   closeSource(source, denops);
+});
+
+Deno.test("gather は hidden ディレクトリのサーバーとも検索結果をマージする", async () => {
+  const makeServer = (file: string) =>
+    startFakeServer(async (request, write) => {
+      await write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          result: {
+            matches: [{
+              type: "match",
+              file,
+              line: 1,
+              content: "hit\n",
+              spans: [[0, 3]],
+              columns: [1],
+            }],
+            num_matches: 1,
+            elapsed_ms: 1,
+          },
+          id: request.id,
+        }),
+      );
+    });
+  const rootServer = await makeServer("top.txt");
+  const hiddenServer = await makeServer("conf.txt");
+  const ports = [rootServer.port, hiddenServer.port];
+  let call = 0;
+  const source = new Source({
+    ensureServer: () =>
+      Promise.resolve({ pid: Deno.pid, port: ports[call++] ?? -1 }),
+    listEntries: () =>
+      Promise.resolve([{ name: ".config", isDirectory: true }]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
+  });
+  const denops = stubDenops();
+  await source.onInit(onInitArgs(denops));
+
+  const chunks = await drain(source.gather(gatherArgs(denops, "hit")));
+  const paths = chunks.flat().map((c) => c.action?.path).sort();
+
+  assertEquals(call, 2);
+  assertEquals(paths, [
+    join(testRoot, ".config", "conf.txt"),
+    join(testRoot, "top.txt"),
+  ]);
+
+  closeSource(source, denops);
+  await rootServer.close();
+  await hiddenServer.close();
 });
 
 Deno.test("gather は search の結果を item にして 2 段で流す", async () => {
@@ -216,6 +270,197 @@ Deno.test("stale 破棄の debug ログは解決済みの入力を使い、生�
 
   closeSource(source, denops);
   await server.close();
+});
+
+Deno.test("gather は hidden サーバーにもユーザー指定 globs を渡す", async () => {
+  const rootServer = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          matches: [{
+            type: "match",
+            file: "a.ts",
+            line: 1,
+            content: "hit\n",
+            spans: [[0, 3]],
+            columns: [1],
+          }],
+          num_matches: 1,
+          elapsed_ms: 1,
+        },
+        id: request.id,
+      }),
+    );
+  });
+  const hiddenServer = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          matches: [{
+            type: "match",
+            file: "b.ts",
+            line: 1,
+            content: "hit\n",
+            spans: [[0, 3]],
+            columns: [1],
+          }],
+          num_matches: 1,
+          elapsed_ms: 1,
+        },
+        id: request.id,
+      }),
+    );
+  });
+  const ports = [rootServer.port, hiddenServer.port];
+  let call = 0;
+  const source = new Source({
+    ensureServer: () =>
+      Promise.resolve({ pid: Deno.pid, port: ports[call++] ?? -1 }),
+    listEntries: () =>
+      Promise.resolve([{ name: ".config", isDirectory: true }]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
+  });
+  const denops = stubDenops();
+  await source.onInit(onInitArgs(denops));
+
+  const params = new Source().params();
+  params.globs = ["*.ts"];
+  await drain(
+    source.gather({
+      denops,
+      context: {},
+      options: {},
+      sourceOptions: { path: testRoot, volatile: true },
+      sourceParams: params,
+      input: "hit",
+    } as unknown as GatherArguments<Params>),
+  );
+
+  const hiddenReq = hiddenServer.requests[0].params as Record<string, unknown>;
+  assertEquals(hiddenReq.glob, ["*.ts"]);
+
+  closeSource(source, denops);
+  await rootServer.close();
+  await hiddenServer.close();
+});
+
+Deno.test("onInit で hidden サーバー起動が失敗してもメインサーバーは動作する", async () => {
+  const rootServer = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          matches: [{
+            type: "match",
+            file: "main.txt",
+            line: 1,
+            content: "hit\n",
+            spans: [[0, 3]],
+            columns: [1],
+          }],
+          num_matches: 1,
+          elapsed_ms: 1,
+        },
+        id: request.id,
+      }),
+    );
+  });
+  let call = 0;
+  const source = new Source({
+    ensureServer: () => {
+      call++;
+      if (call === 1) {
+        return Promise.resolve({ pid: Deno.pid, port: rootServer.port });
+      }
+      return Promise.reject(new Error("hidden server failed"));
+    },
+    listEntries: () =>
+      Promise.resolve([{ name: ".config", isDirectory: true }]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
+  });
+  const denops = stubDenops();
+  await source.onInit(onInitArgs(denops));
+
+  const chunks = await drain(source.gather(gatherArgs(denops, "hit")));
+  const paths = chunks.flat().map((c) => c.action?.path);
+
+  assertEquals(paths, [join(testRoot, "main.txt")]);
+
+  closeSource(source, denops);
+  await rootServer.close();
+});
+
+Deno.test("gather は全サーバーの合計で maxItems 件数を上限する", async () => {
+  const makeRows = (prefix: string, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      type: "match" as const,
+      file: `${prefix}${i}.txt`,
+      line: 1,
+      content: "hit\n",
+      spans: [[0, 3]] as [number, number][],
+      columns: [1],
+    }));
+  const rootServer = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          matches: makeRows("a", 50),
+          num_matches: 50,
+          elapsed_ms: 1,
+        },
+        id: request.id,
+      }),
+    );
+  });
+  const hiddenServer = await startFakeServer(async (request, write) => {
+    await write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          matches: makeRows("b", 50),
+          num_matches: 50,
+          elapsed_ms: 1,
+        },
+        id: request.id,
+      }),
+    );
+  });
+  const ports = [rootServer.port, hiddenServer.port];
+  let call = 0;
+  const source = new Source({
+    ensureServer: () =>
+      Promise.resolve({ pid: Deno.pid, port: ports[call++] ?? -1 }),
+    listEntries: () =>
+      Promise.resolve([{ name: ".config", isDirectory: true }]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
+  });
+  const denops = stubDenops();
+  await source.onInit(onInitArgs(denops));
+
+  const params = new Source().params();
+  params.maxItems = 30;
+  const chunks = await drain(
+    source.gather({
+      denops,
+      context: {},
+      options: {},
+      sourceOptions: { path: testRoot, volatile: true },
+      sourceParams: params,
+      input: "hit",
+    } as unknown as GatherArguments<Params>),
+  );
+
+  assertEquals(chunks.flat().length, 30);
+
+  closeSource(source, denops);
+  await rootServer.close();
+  await hiddenServer.close();
 });
 
 Deno.test("onInit をやり直すとエラーの記憶がリセットされる", async () => {
