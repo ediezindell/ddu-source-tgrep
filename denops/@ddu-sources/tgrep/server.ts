@@ -67,8 +67,9 @@ export async function canConnect(port: number): Promise<boolean> {
 
 export async function probeServer(
   root: string,
+  indexPath?: string,
 ): Promise<ServerInfo | undefined> {
-  const path = serveJsonPath(root);
+  const path = serveJsonPath(root, indexPath);
   let text: string;
   try {
     text = await Deno.readTextFile(path);
@@ -90,6 +91,7 @@ export type SpawnArgs = {
   cmd: string;
   root: string;
   serveArgs: string[];
+  indexPath?: string;
 };
 
 export type SpawnResult = {
@@ -102,6 +104,7 @@ export type EnsureServerArgs = {
   cmd: string;
   root: string;
   serveArgs: string[];
+  indexPath?: string;
   debug: DebugLogger;
   spawn: (args: SpawnArgs) => SpawnResult;
   timeoutMs: number;
@@ -198,13 +201,14 @@ export function spawnServer(args: SpawnArgs): SpawnResult {
     );
   }
 
-  Deno.mkdirSync(join(args.root, ".tgrep"), { recursive: true });
+  Deno.mkdirSync(stateDir(args.root, args.indexPath), { recursive: true });
 
   const detached = isExecutableInPath("setsid");
   const commandLine = buildServeCommandLine({
     cmd: args.cmd,
     root: args.root,
     serveArgs: args.serveArgs,
+    indexPath: args.indexPath,
     setsid: detached,
     shell: isExecutableInPath("sh"),
   });
@@ -222,16 +226,16 @@ export function spawnServer(args: SpawnArgs): SpawnResult {
   return {
     commandLine,
     detached,
-    stderr: () => readServeLog(args.root),
+    stderr: () => readServeLog(args.root, args.indexPath),
   };
 }
 
 export async function ensureServer(
   args: EnsureServerArgs,
 ): Promise<ServerInfo> {
-  const path = serveJsonPath(args.root);
+  const path = serveJsonPath(args.root, args.indexPath);
 
-  const existing = await probeServer(args.root);
+  const existing = await probeServer(args.root, args.indexPath);
   if (existing !== undefined) {
     await args.debug(
       `connected to running server: root=${args.root} serveJson=${path} pid=${existing.pid} port=${existing.port}`,
@@ -245,6 +249,7 @@ export async function ensureServer(
       cmd: args.cmd,
       root: args.root,
       serveArgs: args.serveArgs,
+      indexPath: args.indexPath,
     });
   } catch (e: unknown) {
     throw new Error(
@@ -261,7 +266,7 @@ export async function ensureServer(
 
   const deadline = Date.now() + args.timeoutMs;
   for (;;) {
-    const info = await probeServer(args.root);
+    const info = await probeServer(args.root, args.indexPath);
     if (info !== undefined) {
       await args.debug(
         `server ready: root=${args.root} serveJson=${path} pid=${info.pid} port=${info.port} stderr=${
@@ -284,8 +289,11 @@ export async function ensureServer(
   );
 }
 
-export async function stopServer(root: string): Promise<ServerInfo> {
-  const path = serveJsonPath(root);
+export async function stopServer(
+  root: string,
+  indexPath?: string,
+): Promise<ServerInfo> {
+  const path = serveJsonPath(root, indexPath);
   let text: string;
   try {
     text = await Deno.readTextFile(path);

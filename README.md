@@ -85,24 +85,20 @@ its own walk at startup, the hidden entries are missing from that walk, and it
 evicts them as deleted. Passing `--hidden` through `serveArgs` therefore does
 not widen the search — it stops the server from starting at all.
 
-So a repository that keeps its files under a hidden directory returns nothing,
-without an error. Dotfiles are the usual case: everything lives under
-`.config/`, and only the handful of files at the top level is searchable.
+This source works around the limitation automatically.  On init it walks the
+root and starts an additional `tgrep serve` for each hidden directory (one that
+keeps its files under `.config`, say), so their contents are searched alongside
+the rest of the repository.  Dotfiles work out of the box.
 
-Hidden is judged relative to the server root, so pointing the root inside the
-hidden directory searches it:
+Each hidden directory gets its own index outside the repository, under the
+platform cache directory (`$XDG_CACHE_HOME`, or `~/.cache` on Unix) in
+`ddu-source-tgrep/<encoded-root>/<hidden-dir>`.  Directories named `.git` and
+`.tgrep` are skipped, as are directories matching the root's `.gitignore`.
+Hidden is judged relative to the server root, so pointing the root inside a
+hidden directory via `sourceOptions.path` searches that one directory alone.
 
-```vim
-call ddu#custom#patch_global(#{
-    \   sourceOptions: #{
-    \     tgrep: #{ path: expand('~/dotfiles/.config') },
-    \   },
-    \ })
-```
-
-The root also decides where `.tgrep/` is written and what is out of reach:
-with the root at `~/dotfiles/.config`, the files above it are no longer
-searched. (Checked against tgrep 1.0.2.)
+`:DduTgrepStop` stops every server for the root, including the hidden ones.
+(Checked against tgrep 1.0.2.)
 
 ## Server lifecycle
 

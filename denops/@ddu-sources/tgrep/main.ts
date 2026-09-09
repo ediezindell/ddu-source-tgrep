@@ -9,8 +9,12 @@ import {
 } from "@shougo/ddu-vim/source";
 import type { Item } from "@shougo/ddu-vim/types";
 import { printError, treePath2Filename } from "@shougo/ddu-vim/utils";
+import { join } from "@std/path/join";
 
 import { createDebugLogger } from "./debug.ts";
+import { cacheBaseDir } from "./cache.ts";
+import { parseGitignore } from "./gitignore.ts";
+import { findHiddenDirs, hiddenIndexPath } from "./hidden.ts";
 import {
   type CaseMode,
   type HighlightGroup,
@@ -49,9 +53,14 @@ export type Params = {
   debug: boolean;
 };
 
+export type DirEntry = { name: string; isDirectory: boolean };
+
 export type SourceDeps = {
   ensureServer?: (args: EnsureServerArgs) => Promise<ServerInfo>;
   spawn?: (args: SpawnArgs) => SpawnResult;
+  listEntries?: (root: string) => Promise<DirEntry[]>;
+  readGitignore?: (root: string) => Promise<string>;
+  cacheBaseDir?: () => string;
 };
 
 async function currentCwd(denops: Denops): Promise<string> {
@@ -64,19 +73,78 @@ function reportKey(value: unknown): string {
     : String(value);
 }
 
+async function listRootEntries(root: string): Promise<DirEntry[]> {
+  const entries: DirEntry[] = [];
+  for await (const entry of Deno.readDir(root)) {
+    entries.push({ name: entry.name, isDirectory: entry.isDirectory });
+  }
+  return entries;
+}
+
+async function readRootGitignore(root: string): Promise<string> {
+  try {
+    return await Deno.readTextFile(join(root, ".gitignore"));
+  } catch (e: unknown) {
+    if (e instanceof Deno.errors.NotFound) {
+      return "";
+    }
+    throw e;
+  }
+}
+
+async function searchServer(args: {
+  server: ServerEntry;
+  pattern: string;
+  caseInsensitive: boolean;
+  fixedString: boolean;
+  glob?: string[];
+  types: string[];
+  highlights: HighlightGroup;
+  maxItems: number;
+  signal: AbortSignal;
+}): Promise<Item<ActionData>[]> {
+  const raw = await args.server.session.call("search", {
+    pattern: args.pattern,
+    case_insensitive: args.caseInsensitive,
+    fixed_string: args.fixedString,
+    glob: args.glob ?? [],
+    types: args.types,
+    detail: true,
+    positions: false,
+  }, args.signal);
+  const result = parseSearchResult(raw);
+  return matchRowsToItems({
+    rows: result.matches,
+    root: args.server.root,
+    highlights: args.highlights,
+    maxItems: args.maxItems,
+  });
+}
+
+type ServerEntry = {
+  session: RpcSession;
+  root: string;
+};
+
 export class Source extends BaseSource<Params> {
   override kind = "file";
 
   #root = "";
-  #session: RpcSession | undefined;
+  #servers: ServerEntry[] = [];
   #reported = new Set<string>();
   #ensureServer: (args: EnsureServerArgs) => Promise<ServerInfo>;
   #spawn: (args: SpawnArgs) => SpawnResult;
+  #listEntries: (root: string) => Promise<DirEntry[]>;
+  #readGitignore: (root: string) => Promise<string>;
+  #cacheBaseDir: () => string;
 
   constructor(deps: SourceDeps = {}) {
     super();
     this.#ensureServer = deps.ensureServer ?? ensureServer;
     this.#spawn = deps.spawn ?? spawnServer;
+    this.#listEntries = deps.listEntries ?? listRootEntries;
+    this.#readGitignore = deps.readGitignore ?? readRootGitignore;
+    this.#cacheBaseDir = deps.cacheBaseDir ?? cacheBaseDir;
   }
 
   override async onInit(args: OnInitArguments<Params>): Promise<void> {
@@ -91,10 +159,10 @@ export class Source extends BaseSource<Params> {
     });
 
     this.#reported.clear();
-    this.#session?.close();
-    this.#session = undefined;
+    this.#closeServers();
     try {
-      const info = await this.#ensureServer({
+      const servers: ServerEntry[] = [];
+      const main = await this.#ensureServer({
         cmd: args.sourceParams.cmd,
         root: this.#root,
         serveArgs: args.sourceParams.serveArgs,
@@ -102,10 +170,45 @@ export class Source extends BaseSource<Params> {
         spawn: this.#spawn,
         timeoutMs: SPAWN_TIMEOUT_MS,
       });
-      this.#session = new RpcSession(info.port);
+      servers.push({ session: new RpcSession(main.port), root: this.#root });
+
+      for (const dir of await this.#hiddenDirs()) {
+        const indexPath = hiddenIndexPath({
+          cacheBase: this.#cacheBaseDir(),
+          root: this.#root,
+          dir,
+        });
+        const info = await this.#ensureServer({
+          cmd: args.sourceParams.cmd,
+          root: join(this.#root, dir),
+          indexPath,
+          serveArgs: args.sourceParams.serveArgs,
+          debug,
+          spawn: this.#spawn,
+          timeoutMs: SPAWN_TIMEOUT_MS,
+        });
+        servers.push({
+          session: new RpcSession(info.port),
+          root: join(this.#root, dir),
+        });
+      }
+
+      this.#servers = servers;
+      await debug(
+        `initialized ${servers.length} server(s): root=${this.#root} hidden=${
+          JSON.stringify(servers.slice(1).map((s) => s.root))
+        }`,
+      );
     } catch (e: unknown) {
+      this.#closeServers();
       await this.#reportOnce(args.denops, e);
     }
+  }
+
+  async #hiddenDirs(): Promise<string[]> {
+    const entries = await this.#listEntries(this.#root);
+    const ignored = parseGitignore(await this.#readGitignore(this.#root));
+    return findHiddenDirs({ entries, isIgnored: ignored });
   }
 
   #reportOnce(denops: Denops, error: unknown): Promise<void> {
@@ -117,16 +220,23 @@ export class Source extends BaseSource<Params> {
     return printError(denops, error);
   }
 
+  #closeServers(): void {
+    for (const server of this.#servers) {
+      server.session.close();
+    }
+    this.#servers = [];
+  }
+
   override onEvent(args: OnEventArguments<Params>): void {
     if (args.event === "close" || args.event === "cancel") {
-      this.#session?.close();
+      this.#closeServers();
     }
   }
 
   gather(args: GatherArguments<Params>): ReadableStream<Item<ActionData>[]> {
     const abortController = new AbortController();
     const root = this.#root;
-    const session = this.#session;
+    const servers = this.#servers;
     const params = args.sourceParams;
     const reportOnce = (error: unknown) => this.#reportOnce(args.denops, error);
 
@@ -139,18 +249,19 @@ export class Source extends BaseSource<Params> {
           if (input.length < params.minInputLength) {
             return;
           }
-          if (session === undefined) {
+          if (servers.length === 0) {
             await reportOnce(
               "tgrep: the server is unavailable. See :messages for the failure reported while the source was initialized.",
             );
             return;
           }
 
-          const globs = combineGlobs(
+          const cwd = await currentCwd(args.denops);
+          const scopeGlobs = combineGlobs(
             resolveScope({
               scope: params.scope,
               root,
-              cwd: await currentCwd(args.denops),
+              cwd,
               markers: params.rootMarkers,
               exists: pathExists,
             }),
@@ -162,30 +273,29 @@ export class Source extends BaseSource<Params> {
           );
           await debug(
             `search: pattern=${input} glob=${
-              JSON.stringify(globs)
-            } case_insensitive=${caseInsensitive}`,
+              JSON.stringify(scopeGlobs)
+            } case_insensitive=${caseInsensitive} servers=${servers.length}`,
           );
 
           const startedAt = Date.now();
-          const raw = await session.call("search", {
-            pattern: input,
-            case_insensitive: caseInsensitive,
-            fixed_string: params.fixedString,
-            glob: globs,
-            types: params.types,
-            detail: true,
-            positions: false,
-          }, abortController.signal);
+          const requests = servers.map((server) =>
+            searchServer({
+              server,
+              pattern: input,
+              caseInsensitive,
+              fixedString: params.fixedString,
+              glob: server.root === root ? scopeGlobs : undefined,
+              types: params.types,
+              highlights: params.highlights,
+              maxItems: params.maxItems,
+              signal: abortController.signal,
+            })
+          );
+          const results = await Promise.all(requests);
 
-          const result = parseSearchResult(raw);
-          const items = matchRowsToItems({
-            rows: result.matches,
-            root,
-            highlights: params.highlights,
-            maxItems: params.maxItems,
-          });
+          const items = results.flatMap((result) => result);
           await debug(
-            `search done: items=${items.length} num_matches=${result.numMatches} elapsed_ms=${result.elapsedMs} roundtrip_ms=${
+            `search done: items=${items.length} roundtrip_ms=${
               Date.now() - startedAt
             }`,
           );

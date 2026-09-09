@@ -241,14 +241,23 @@ HIDDEN FILES					*ddu-source-tgrep-hidden*
 be told otherwise.  It rejects "--hidden", and an index built with
 "tgrep index --hidden" does not survive: the server compares the index against
 its own walk at startup, does not see the hidden entries there and evicts them
-as deleted.
+as deleted.  Passing "--hidden" through |ddu-source-tgrep-param-serveArgs|
+therefore does not widen the search -- it stops the server from starting at
+all.
 
-A repository that keeps its files under a hidden directory therefore returns
-nothing, without an error.  Dotfiles are the usual case: everything lives
-under ".config", and only the files at the top level are searchable.
+This source works around the limitation automatically.  On init it walks the
+root and starts an additional "tgrep serve" for each hidden directory, so their
+contents are searched alongside the rest of the repository.  Dotfiles (files
+kept under ".config", say) work out of the box.
 
-Hidden is judged relative to the server root, so pointing the root inside the
-hidden directory searches it.
+Each hidden directory gets its own index outside the repository, under the
+platform cache directory ("$XDG_CACHE_HOME", or "~/.cache" on Unix) in
+"ddu-source-tgrep/<encoded-root>/<hidden-dir>".  Directories named ".git" and
+".tgrep" are skipped, as are directories matching the root's ".gitignore".
+
+Hidden is judged relative to the server root, so pointing the root inside a
+hidden directory via |ddu-source-option-path| searches that one directory
+alone.
 >vim
     call ddu#custom#patch_global(#{
         \   sourceOptions: #{
@@ -256,8 +265,7 @@ hidden directory searches it.
         \   },
         \ })
 <
-The root also decides where ".tgrep" is written and what is out of reach: with
-the root at "~/dotfiles/.config", the files above it are no longer searched.
+: |DduTgrepStop| stops every server for the root, including the hidden ones.
 
 Checked against "tgrep" 1.0.2.
 

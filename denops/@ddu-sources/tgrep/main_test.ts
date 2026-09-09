@@ -88,6 +88,9 @@ function closeSource(source: Source, denops: Denops): void {
 function sourceOn(port: number): Source {
   return new Source({
     ensureServer: () => Promise.resolve({ pid: Deno.pid, port }),
+    listEntries: () => Promise.resolve([]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
   });
 }
 
@@ -109,6 +112,57 @@ Deno.test("gather は minInputLength 未満の入力で何も流さない", asyn
   assertEquals(await drain(source.gather(gatherArgs(denops, "a"))), []);
 
   closeSource(source, denops);
+});
+
+Deno.test("gather は hidden ディレクトリのサーバーとも検索結果をマージする", async () => {
+  const makeServer = (file: string) =>
+    startFakeServer(async (request, write) => {
+      await write(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          result: {
+            matches: [{
+              type: "match",
+              file,
+              line: 1,
+              content: "hit\n",
+              spans: [[0, 3]],
+              columns: [1],
+            }],
+            num_matches: 1,
+            elapsed_ms: 1,
+          },
+          id: request.id,
+        }),
+      );
+    });
+  const rootServer = await makeServer("top.txt");
+  const hiddenServer = await makeServer("conf.txt");
+  const ports = [rootServer.port, hiddenServer.port];
+  let call = 0;
+  const source = new Source({
+    ensureServer: () =>
+      Promise.resolve({ pid: Deno.pid, port: ports[call++] ?? -1 }),
+    listEntries: () =>
+      Promise.resolve([{ name: ".config", isDirectory: true }]),
+    readGitignore: () => Promise.resolve(""),
+    cacheBaseDir: () => "/cache/ddu-source-tgrep",
+  });
+  const denops = stubDenops();
+  await source.onInit(onInitArgs(denops));
+
+  const chunks = await drain(source.gather(gatherArgs(denops, "hit")));
+  const paths = chunks.flat().map((c) => c.action?.path).sort();
+
+  assertEquals(call, 2);
+  assertEquals(paths, [
+    join(testRoot, ".config", "conf.txt"),
+    join(testRoot, "top.txt"),
+  ]);
+
+  closeSource(source, denops);
+  await rootServer.close();
+  await hiddenServer.close();
 });
 
 Deno.test("gather は search の結果を item にして 2 段で流す", async () => {

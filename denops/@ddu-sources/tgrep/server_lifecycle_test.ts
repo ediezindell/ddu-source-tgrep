@@ -401,6 +401,45 @@ Deno.test({
 });
 
 Deno.test({
+  name:
+    "stopServer は索引置き場が指定されていればそちらの serve.json の pid に SIGTERM を送る",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await withRoot(async (root) => {
+      const indexPath = join(root, "cache", "entry");
+      await Deno.mkdir(indexPath, { recursive: true });
+      const child = new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "await new Promise((resolve) => setTimeout(resolve, 60_000));",
+        ],
+        stdin: "null",
+        stdout: "null",
+        stderr: "null",
+      }).spawn();
+      try {
+        await Deno.writeTextFile(
+          join(indexPath, "serve.json"),
+          JSON.stringify({ pid: child.pid, port: 1 }),
+        );
+
+        const info = await stopServer(root, indexPath);
+        const status = await child.status;
+
+        assertEquals(info.pid, child.pid);
+        assertEquals(status.signal, "SIGTERM");
+      } finally {
+        try {
+          child.kill();
+        } catch {
+          // Already reaped by the assertions above.
+        }
+      }
+    });
+  },
+});
+
+Deno.test({
   name: "probeServer は pid が死んでいれば接続できるポートでも undefined",
   ignore: Deno.build.os === "windows",
   fn: async () => {
