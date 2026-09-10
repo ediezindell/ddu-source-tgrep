@@ -34,3 +34,11 @@ Deno.test("parseGitignore は否定パターンを現段階では無視する", 
   const isIgnored = matcher("important.log\n!important.log");
   assertEquals(isIgnored("important.log"), true);
 });
+
+Deno.test("parseGitignore はワイルドカード・グロブパターンに対応する", () => {
+  const isIgnored = matcher("*.log\nbuild-*\n.venv*");
+  assertEquals(isIgnored("app.log"), true);
+  assertEquals(isIgnored("build-out"), true);
+  assertEquals(isIgnored(".venv-dev"), true);
+  assertEquals(isIgnored("src"), false);
+});
