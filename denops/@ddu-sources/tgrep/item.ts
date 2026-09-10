@@ -17,8 +17,10 @@ export type SearchResult = {
   elapsedMs: number;
 };
 
+const ENCODER = new TextEncoder();
+
 function utf8Length(text: string): number {
-  return new TextEncoder().encode(text).length;
+  return ENCODER.encode(text).length;
 }
 
 export function resolveCaseInsensitive(

@@ -1,6 +1,6 @@
 import { join } from "@std/path/join";
 import { cacheBaseDir } from "./cache.ts";
-import { parseGitignore } from "./gitignore.ts";
+import { parseGitignore, readRootGitignore } from "./gitignore.ts";
 
 const ALWAYS_EXCLUDED = new Set([".git", ".tgrep"]);
 
@@ -57,16 +57,7 @@ export async function listHiddenDirs(args: {
     return entries;
   });
 
-  const readGitignore = args.readGitignore ?? (async (root: string) => {
-    try {
-      return await Deno.readTextFile(join(root, ".gitignore"));
-    } catch (e: unknown) {
-      if (e instanceof Deno.errors.NotFound) {
-        return "";
-      }
-      throw e;
-    }
-  });
+  const readGitignore = args.readGitignore ?? readRootGitignore;
 
   const entries = await listEntries(args.root);
   const gitignore = await readGitignore(args.root);

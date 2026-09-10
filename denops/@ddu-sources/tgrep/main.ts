@@ -13,7 +13,7 @@ import { join } from "@std/path/join";
 
 import { createDebugLogger } from "./debug.ts";
 import { cacheBaseDir } from "./cache.ts";
-import { parseGitignore } from "./gitignore.ts";
+import { readRootGitignore } from "./gitignore.ts";
 import { hiddenIndexPath, listHiddenDirs } from "./hidden.ts";
 import {
   type CaseMode,
@@ -81,16 +81,6 @@ async function listRootEntries(root: string): Promise<DirEntry[]> {
   return entries;
 }
 
-async function readRootGitignore(root: string): Promise<string> {
-  try {
-    return await Deno.readTextFile(join(root, ".gitignore"));
-  } catch (e: unknown) {
-    if (e instanceof Deno.errors.NotFound) {
-      return "";
-    }
-    throw e;
-  }
-}
 
 async function searchServer(args: {
   server: ServerEntry;
